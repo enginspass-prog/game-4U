@@ -1,0 +1,337 @@
+
+<!DOCTYPE html>
+<html dir="rtl" lang="fa">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>بازی دوز (XO) - نسخه تعاملی</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            user-select: none;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e3c72, #2a5298);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .game-container {
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(8px);
+            border-radius: 48px;
+            padding: 25px 20px 30px 20px;
+            box-shadow: 0 25px 40px rgba(0,0,0,0.3);
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+
+        .game {
+            background-color: #0f172a;
+            border-radius: 40px;
+            padding: 25px;
+            box-shadow: inset 0 0 5px #334155, 0 20px 25px -10px black;
+        }
+
+        h1 {
+            text-align: center;
+            color: #f1f5f9;
+            margin: 0 0 10px 0;
+            font-size: 2.2rem;
+            text-shadow: 0 4px 8px rgba(0,0,0,0.3);
+            letter-spacing: 1px;
+        }
+
+        .turn-indicator {
+            background: #1e293b;
+            color: #facc15;
+            text-align: center;
+            font-size: 1.6rem;
+            font-weight: bold;
+            padding: 10px 20px;
+            border-radius: 60px;
+            margin: 10px 0 20px 0;
+            display: inline-block;
+            width: auto;
+            box-shadow: inset 0 1px 2px #334155, 0 4px 8px rgba(0,0,0,0.2);
+        }
+
+        .status-area {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 15px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+
+        .reset-btn {
+            background: #ef4444;
+            border: none;
+            color: white;
+            font-size: 1.1rem;
+            font-weight: bold;
+            padding: 8px 20px;
+            border-radius: 40px;
+            cursor: pointer;
+            transition: 0.2s;
+            box-shadow: 0 2px 5px black;
+            font-family: inherit;
+        }
+
+        .reset-btn:hover {
+            background: #dc2626;
+            transform: scale(1.02);
+        }
+
+        .board {
+            display: grid;
+            grid-template-columns: repeat(3, 100px);
+            grid-template-rows: repeat(3, 100px);
+            gap: 12px;
+            background-color: #0f172a;
+            justify-content: center;
+        }
+
+        .cell {
+            background-color: #334155;
+            border-radius: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 4rem;
+            font-weight: bold;
+            color: white;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 8px 0 #0f172a;
+            text-shadow: 0 2px 5px rgba(0,0,0,0.5);
+        }
+
+        .cell.X {
+            color: #60a5fa;
+            text-shadow: 0 0 6px #2563eb;
+        }
+
+        .cell.O {
+            color: #facc15;
+            text-shadow: 0 0 6px #ca8a04;
+        }
+
+        .cell:active {
+            transform: translateY(4px);
+            box-shadow: 0 2px 0 #0f172a;
+        }
+
+        .winner-message {
+            text-align: center;
+            margin-top: 25px;
+            font-size: 1.5rem;
+            font-weight: bold;
+            background: #0f172a;
+            padding: 12px;
+            border-radius: 40px;
+            color: #facc15;
+            border-right: 4px solid gold;
+        }
+
+        footer {
+            text-align: center;
+            margin-top: 18px;
+            font-size: 0.8rem;
+            color: #cbd5e6;
+        }
+
+        @media (max-width: 450px) {
+            .board {
+                grid-template-columns: repeat(3, 80px);
+                grid-template-rows: repeat(3, 80px);
+                gap: 8px;
+            }
+            .cell {
+                font-size: 3rem;
+                border-radius: 20px;
+            }
+            .turn-indicator {
+                font-size: 1.2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="game-container">
+    <div class="game">
+        <h1>🎮 بازی دوز (XO)</h1>
+        <div class="status-area">
+            <div class="turn-indicator" id="turnText">نوبت: X</div>
+            <button class="reset-btn" id="resetBtn">⟳ بازی جدید</button>
+        </div>
+        <div class="board" id="board">
+            <!-- 9 cell ساخته می‌شود با js -->
+        </div>
+        <div id="winnerMessage" class="winner-message"></div>
+        <footer>✧ کلیک روی خانه‌ها | X شروع می‌کند ✧</footer>
+    </div>
+</div>
+
+<script>
+    // ----- متغیرهای بازی -----
+    let board = [
+        ["", "", ""],
+        ["", "", ""],
+        ["", "", ""]
+    ];
+    let currentPlayer = "X";   // X همیشه شروع می‌کند
+    let gameActive = true;
+    let winnerInfo = null;      // برنده یا تساوی
+
+    // عناصر DOM
+    const boardElement = document.getElementById("board");
+    const turnText = document.getElementById("turnText");
+    const winnerMessageDiv = document.getElementById("winnerMessage");
+    const resetBtn = document.getElementById("resetBtn");
+
+    // ----- توابع کمکی برای نمایش برد (win detection) -----
+    function checkWinner() {
+        // بررسی سطرها
+        for (let i = 0; i < 3; i++) {
+            if (board[i][0] && board[i][0] === board[i][1] && board[i][1] === board[i][2]) {
+                return board[i][0];
+            }
+        }
+        // بررسی ستون‌ها
+        for (let j = 0; j < 3; j++) {
+            if (board[0][j] && board[0][j] === board[1][j] && board[1][j] === board[2][j]) {
+                return board[0][j];
+            }
+        }
+        // قطر اصلی
+        if (board[0][0] && board[0][0] === board[1][1] && board[1][1] === board[2][2]) {
+            return board[0][0];
+        }
+        // قطر فرعی
+        if (board[0][2] && board[0][2] === board[1][1] && board[1][1] === board[2][0]) {
+            return board[0][2];
+        }
+        return null;
+    }
+
+    function isBoardFull() {
+        for (let i = 0; i < 3; i++) {
+            for (let j = 0; j < 3; j++) {
+                if (board[i][j] === "") return false;
+            }
+        }
+        return true;
+    }
+
+    function updateGameState() {
+        const winner = checkWinner();
+        if (winner) {
+            gameActive = false;
+            winnerInfo = `🎉 برنده بازیکن ${winner} ! 🎉`;
+            winnerMessageDiv.innerText = winnerInfo;
+            turnText.innerText = `پایان بازی`;
+            return;
+        }
+        
+        if (isBoardFull()) {
+            gameActive = false;
+            winnerInfo = `🤝 بازی مساوی شد! 🤝`;
+            winnerMessageDiv.innerText = winnerInfo;
+            turnText.innerText = `مساوی`;
+            return;
+        }
+        
+        // بازی ادامه دارد
+        gameActive = true;
+        winnerInfo = null;
+        winnerMessageDiv.innerText = "";
+        turnText.innerText = `نوبت: ${currentPlayer}`;
+    }
+
+    // رندر کردن صفحه بازی از روی آرایه board
+    function renderBoard() {
+        boardElement.innerHTML = "";
+        for (let i = 0; i < 3; i++) {
+            for (let j = 0; j < 3; j++) {
+                const cellValue = board[i][j];
+                const cell = document.createElement("div");
+                cell.classList.add("cell");
+                if (cellValue === "X") cell.classList.add("X");
+                if (cellValue === "O") cell.classList.add("O");
+                cell.textContent = cellValue;
+                // اضافه کردن event listener با بستن i,j
+                cell.addEventListener("click", (function(row, col) {
+                    return function() { handleCellClick(row, col); };
+                })(i, j));
+                boardElement.appendChild(cell);
+            }
+        }
+    }
+
+    // هندل کلیک روی سلول
+    function handleCellClick(row, col) {
+        // اگر بازی غیرفعال است یا خانه پر شده یا برنده مشخص شده
+        if (!gameActive) return;
+        if (board[row][col] !== "") return;
+        
+        // اعمال حرکت
+        board[row][col] = currentPlayer;
+        
+        // بررسی برد یا مساوی بعد از حرکت
+        const winner = checkWinner();
+        const full = isBoardFull();
+        
+        if (winner) {
+            gameActive = false;
+            renderBoard();
+            updateGameState();   // پیغام برنده و غیره
+            return;
+        }
+        
+        if (full) {
+            gameActive = false;
+            renderBoard();
+            updateGameState();
+            return;
+        }
+        
+        // تغییر نوبت
+        currentPlayer = (currentPlayer === "X") ? "O" : "X";
+        renderBoard();
+        updateGameState();  // فقط turnText رو به‌روز کن
+    }
+
+    // ریست کردن کامل بازی
+    function resetGame() {
+        board = [
+            ["", "", ""],
+            ["", "", ""],
+            ["", "", ""]
+        ];
+        currentPlayer = "X";
+        gameActive = true;
+        winnerInfo = null;
+        winnerMessageDiv.innerText = "";
+        renderBoard();
+        updateGameState();  // نوبت X رو نشون بده
+    }
+
+    // مقداردهی اولیه و رندر
+    function init() {
+        renderBoard();
+        updateGameState();
+        resetBtn.addEventListener("click", resetGame);
+    }
+
+    // شروع بازی
+    init();
+</script>
+</body>
+</html> 
