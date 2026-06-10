@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="fa">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>خطوط هوایی - بازی استراتژیک پرواز</title>
+    <style>
+        * {
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: linear-gradient(145deg, #0a0f2a, #0a1a3a);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Segoe UI', 'Tahoma', sans-serif;
+        }
+
+        .game-wrapper {
+            background: #030614;
+            border-radius: 48px;
+            padding: 20px;
+            box-shadow: 0 25px 45px rgba(0,0,0,0.5);
+        }
+
+        canvas {
+            display: block;
+            margin: 0 auto;
+            border-radius: 28px;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.4);
+            cursor: crosshair;
+            background: #0a1a2f;
+        }
+
+        .info-panel {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 18px;
+            gap: 15px;
+            flex-wrap: wrap;
+            color: white;
+        }
+
+        .stage-box {
+            background: #1e2a4a;
+            padding: 8px 20px;
+            border-radius: 40px;
+            font-weight: bold;
+            font-size: 1.2rem;
+            backdrop-filter: blur(4px);
+        }
+
+        .rule-status {
+            background: #0f172fd9;
+            padding: 8px 18px;
+            border-radius: 30px;
+            font-size: 0.85rem;
+            text-align: center;
+        }
+
+        button {
+            background: #f59e0b;
+            border: none;
+            padding: 8px 22px;
+            border-radius: 40px;
+            font-weight: bold;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: 0.2s;
+            color: #1e1a2f;
+            font-family: inherit;
+        }
+
+        button:hover {
+            background: #ffb82e;
+            transform: scale(1.02);
+        }
+
+        .message {
+            background: #000000aa;
+            border-radius: 30px;
+            padding: 6px 15px;
+            font-size: 0.8rem;
+            color: #ffd966;
+        }
+    </style>
+</head>
+<body>
+<div>
+    <div class="game-wrapper">
+        <canvas id="globeCanvas" width="900" height="500"></canvas>
+        <div class="info-panel">
+            <div class="stage-box">🌍 مرحله: <span id="stageNum">1</span></div>
+            <div class="rule-status">✈️ مبدا سبز → مقصد قرمز | خطوط نباید قطع کنند</div>
+            <button id="resetGameBtn">🌐 شروع مجدد</button>
+        </div>
+        <div class="message" id="statusMsg">✅ روی مبدا (سبز) کلیک، سپس روی مقصد (قرمز) کلیک کن</div>
+    </div>
+</div>
+
+<script>
+    (function(){
+        const canvas = document.getElementById('globeCanvas');
+        const ctx = canvas.getContext('2d');
+        const width = 900, height = 500;
+        canvas.width = width;
+        canvas.height = height;
+
+        // ---------- داده‌های بازی ----------
+        let stage = 1;                // مرحله جاری
+        let airports = [];           // فرودگاه‌های فعال روی خشکی (نقاط تصادفی)
+        let flightSegments = [];      // خطوط رسم شده قبلی {x1,y1,x2,y2}
+        let currentOrigin = null;     // نقطه مبدا مرحله (با کلیک اول تعیین می‌شود)
+        let currentDestination = null; // نقطه مقصد مرحله (با کلیک دوم)
+        let expectingDestination = false; // وضعیت انتظار برای کلیک مقصد
+        let gameActive = true;
+        let animationRequest = null;
+        let animating = false;         // در حال حرکت هواپیما
+        let animatedPath = null;       // مسیر در حال انیمیشن
+        
+        // برای تشخیص قطع خطوط (تقاطع پاره خطها)
+        function segmentsIntersect(p1,p2,p3,p4) {
+            function orient(a,b,c) {
+                return (b.x - a.x)*(c.y - a.y) - (b.y - a.y)*(c.x - a.x);
+            }
+            let o1 = orient(p1,p2,p3);
+            let o2 = orient(p1,p2,p4);
+            let o3 = orient(p3,p4,p1);
+            let o4 = orient(p3,p4,p2);
+            if(o1===0 && onSegment(p1,p3,p2)) return true;
+            if(o2===0 && onSegment(p1,p4,p2)) return true;
+            if(o3===0 && onSegment(p3,p1,p4)) return true;
+            if(o4===0 && onSegment(p3,p2,p4)) return true;
+            return (o1>0) !== (o2>0) && (o3>0) !== (o4>0);
+        }
+        function onSegment(a,b,c) {
+            return Math.min(a.x,c.x) <= b.x && b.x <= Math.max(a.x,c.x) &&
+                   Math.min(a.y,c.y) <= b.y && b.y <= Math.max(a.y,c.y);
+        }
+        
+        // بررسی می‌کند خط جدید (origin->dest) با خطوط قبلی تقاطع دارد؟
+        function crossesAnyPreviousLine(newLine) {
+            for(let seg of flightSegments) {
+                if(segmentsIntersect(
+                    {x:newLine.x1, y:newLine.y1},
+                    {x:newLine.x2, y:newLine.y2},
+                    {x:seg.x1, y:seg.x2},
+                    {x:seg.y1, y:seg.y2}
+                )) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        // شبیه‌سازی خشکی‌ها (نقاط تصادفی داخل قاره‌ها)
+        // برای سادگی: یک ماسک ساده از خشکی‌ها را با شبیه‌سازی بیضی‌ها و مناطق ایجاد می‌کنیم
+        function isOnLand(x,y) {
+            // نقشه ساده: خشکی‌ها شامل آمریکا، اروپا/آفریقا، آسیا، استرالیا
+            // نرمالایز: 0-900 عرض، 0-500 ارتفاع ~ طول و عرض جغرافیایی نمادین
+            let nx = x/width;   // 0..1
+            let ny = y/height;
+            // آمریکای شمالی + جنوبی
+            if(nx>0.08 && nx<0.35 && ny>0.25 && ny<0.75) return true;
+            // اروپا و آفریقا
+            if(nx>0.45 && nx<0.65 && ny>0.3 && ny<0.8) return true;
+            // آسیا
+            if(nx>0.68 && nx<0.92 && ny>0.2 && ny<0.65) return true;
+            // استرالیا
+            if(nx>0.78 && nx<0.92 && ny>0.7 && ny<0.85) return true;
+            // گرینلند / قطبی
+            if(nx>0.55 && nx<0.75 && ny>0.05 && ny<0.2) return true;
+            return false;
+        }
+        
+        // تولید نقطه تصادفی روی خشکی
+        function randomLandPoint() {
+            let maxAttempts = 300;
+            for(let i=0;i<maxAttempts;i++) {
+                let x = Math.random() * width;
+                let y = Math.random() * height;
+                if(isOnLand(x,y)) return {x,y};
+            }
+            // fallback
+            return {x: width*0.5, y: height*0.5};
+        }
+        
+        // راه‌اندازی مرحله: دو فرودگاه تصادفی (مبدا و مقصد) بدون برخورد با خطوط قبلی و متفاوت
+        function generateStageAirports() {
+            let origin = randomLandPoint();
+            let dest = randomLandPoint();
+            let attempts = 0;
+            while( (Math.hypot(origin.x-dest.x, origin.y-dest.y) < 50 || 
+                    (flightSegments.some(seg => segmentsIntersect(
+                        {x:origin.x,y:origin.y},{x:dest.x,y:dest.y},
+                        {x:seg.x1,y:seg.x2},{x:seg.y1,y:seg.y2}
+                    )))) && attempts<100) {
+                origin = randomLandPoint();
+                dest = randomLandPoint();
+                attempts++;
+            }
+            return {origin, destination:dest};
+        }
+        
+        // شروع مرحله جدید (پس از موفقیت یا ریست)
+        function startNewStage() {
+            gameActive = true;
+            expectingDestination = false;
+            currentOrigin = null;
+            currentDestination = null;
+            const airportsPair = generateStageAirports();
+            currentOrigin = airportsPair.origin;
+            currentDestination = airportsPair.destination;
+            // نمایش نقاط مبدا/مقصد روی نقشه
+            drawCanvas();
+            document.getElementById('statusMsg').innerHTML = "🟢 روی مبدا سبز کلیک کن، سپس روی مقصد قرمز (خط نباید قبلی را قطع کند)";
+            document.getElementById('stageNum').innerText = stage;
+        }
+        
+        // بررسی اتصال موفق بعد از کلیک دوم
+        function tryCompleteFlight(destPoint) {
+            if(!currentOrigin) return false;
+            const newSegment = {
+                x1: currentOrigin.x, y1: currentOrigin.y,
+                x2: destPoint.x, y2: destPoint.y
+            };
+            // بررسی عدم تقاطع
+            if(crossesAnyPreviousLine(newSegment)) {
+                document.getElementById('statusMsg').innerHTML = "❌ خط پرواز جدید، مسیر قبلی را قطع می‌کند! دوباره امتحان کن (روی مقصد قرمز کلیک کن)";
+                return false;
+            }
+            // اضافه کردن خط جدید
+            flightSegments.push(newSegment);
+            // انیمیشن حرکت هواپیما
+            animateFlight(currentOrigin, destPoint, () => {
+                // بعد از انیمیشن، مرحله بعد
+                stage++;
+                // بررسی پیروزی نهایی (مثلاً بعد از 8 مرحله پیام)
+                if(stage > 12) {
+                    document.getElementById('statusMsg').innerHTML = "🏆 تو قهرمان خطوط هوایی جهان شدی! 🏆";
+                    gameActive = false;
+                    drawCanvas();
+                    return;
+                }
+                startNewStage();
+                drawCanvas();
+            });
+            return true;
+        }
+        
+        // انیمیشن ساده هواپیما روی خط
+        function animateFlight(from, to, callback) {
+            if(animating) return;
+            animating = true;
+            let startTime = null;
+            const duration = 800; // ms
+            function step(timestamp) {
+                if(!startTime) startTime = timestamp;
+                const elapsed = timestamp - startTime;
+                let t = Math.min(1, elapsed/duration);
+                const cx = from.x + (to.x - from.x)*t;
+                const cy = from.y + (to.y - from.y)*t;
+                drawCanvasWithPlane(cx, cy);
+                if(t < 1) {
+                    requestAnimationFrame(step);
+                } else {
+                    animating = false;
+                    if(callback) callback();
+                    drawCanvas();
+                }
+            }
+            requestAnimationFrame(step);
+        }
+        
+        // رسم کره زمین + فرودگاه‌ها + خطوط قبلی + نقاط مبدا/مقصد مرحله
+        function drawCanvasWithPlane(planeX=null, planeY=null) {
+            ctx.clearRect(0,0,width,height);
+            // اقیانوس
+            ctx.fillStyle = "#0b2d4b";
+            ctx.fillRect(0,0,width,height);
+            // خشکی‌ها (با رنگ سبز خاکی)
+            ctx.fillStyle = "#5c8c4a";
+            // شبیه‌سازی اشکال خشکی
+            ctx.beginPath();
+            // آمریکا
+            ctx.rect(30,120,260,280);
+            // اروپا+آفریقا
+            ctx.rect(390,140,200,320);
+            // آسیا
+            ctx.rect(610,90,220,280);
+            // استرالیا
+            ctx.rect(690,360,150,85);
+            ctx.fill();
+            ctx.fillStyle = "#7aa55a";
+            ctx.globalAlpha=0.6;
+            ctx.fill();
+            ctx.globalAlpha=1;
+            // خطوط گرید ساده
+            ctx.strokeStyle = "#3e6d8c";
+            ctx.lineWidth=0.6;
+            for(let i=0;i<10;i++) {
+                ctx.beginPath();
+                ctx.moveTo(0,i*50); ctx.lineTo(width,i*50);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(i*90,0); ctx.lineTo(i*90,height);
+                ctx.stroke();
+            }
+            
+            // رسم خطوط قبلی
+            for(let seg of flightSegments) {
+                ctx.beginPath();
+                ctx.moveTo(seg.x1, seg.y1);
+                ctx.lineTo(seg.x2, seg.y2);
+                ctx.strokeStyle = "#ffbb77";
+                ctx.lineWidth = 3;
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.arc(seg.x1, seg.y1, 6, 0, 2*Math.PI);
+                ctx.fillStyle = "#2ecc71";
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(seg.x2, seg.y2, 6, 0, 2*Math.PI);
+                ctx.fillStyle = "#e67e22";
+                ctx.fill();
+            }
+            
+            // مبدا و مقصد مرحله جاری
+            if(currentOrigin) {
+                ctx.beginPath();
+                ctx.arc(currentOrigin.x, currentOrigin.y, 10, 0, 2*Math.PI);
+                ctx.fillStyle = "#2ecc71";
+                ctx.fill();
+                ctx.fillStyle = "white";
+                ctx.font = "bold 16px sans-serif";
+                ctx.shadowBlur=0;
+                ctx.fillText("🛫", currentOrigin.x-12, currentOrigin.y-8);
+            }
+            if(currentDestination) {
+                ctx.beginPath();
+                ctx.arc(currentDestination.x, currentDestination.y, 10, 0, 2*Math.PI);
+                ctx.fillStyle = "#e74c3c";
+                ctx.fill();
+                ctx.fillStyle = "white";
+                ctx.fillText("🛬", currentDestination.x-8, currentDestination.y-12);
+            }
+            
+            // هواپیمای متحرک
+            if(planeX !== null && planeY !== null) {
+                ctx.beginPath();
+                ctx.moveTo(planeX, planeY-8);
+                ctx.lineTo(planeX+10, planeY+4);
+                ctx.lineTo(planeX, planeY);
+                ctx.lineTo(planeX-10, planeY+4);
+                ctx.fillStyle = "#f1c40f";
+                ctx.fill();
+            }
+        }
+        
+        function drawCanvas() {
+            drawCanvasWithPlane();
+        }
+        
+        // مدیریت کلیک روی بوم
+        function handleCanvasClick(e) {
+            if(!gameActive || animating) {
+                document.getElementById('statusMsg').innerHTML = "⏳ صبر کن، انیمیشن در حال پروازه...";
+                return;
+            }
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            let mouseX = (e.clientX - rect.left) * scaleX;
+            let mouseY = (e.clientY - rect.top) * scaleY;
+            mouseX = Math.min(width, Math.max(0, mouseX));
+            mouseY = Math.min(height, Math.max(0, mouseY));
+            
+            // مرحله: ابتدا باید روی مبدا کلیک کند (منطقه سبز)
+            if(!expectingDestination && currentOrigin) {
+                const distToOrigin = Math.hypot(mouseX-currentOrigin.x, mouseY-currentOrigin.y);
+                if(distToOrigin < 18) {
+                    expectingDestination = true;
+                    document.getElementById('statusMsg').innerHTML = "🟠 حالا روی فرودگاه مقصد (قرمز) کلیک کن، خط نباید خطوط قبلی را قطع کند";
+                    drawCanvas();
+                } else {
+                    document.getElementById('statusMsg').innerHTML = "🔴 ابتدا روی نقطه سبز (مبدا پرواز) کلیک کن";
+                }
+                return;
+            }
+            
+            if(expectingDestination && currentDestination) {
+                const distToDest = Math.hypot(mouseX-currentDestination.x, mouseY-currentDestination.y);
+                if(distToDest < 18) {
+                    tryCompleteFlight(currentDestination);
+                    expectingDestination = false;
+                    currentOrigin = null;
+                    currentDestination = null;
+                } else {
+                    document.getElementById('statusMsg').innerHTML = "⚠️ روی نقطه قرمز (مقصد) کلیک کن تا خط پرواز رسم شود.";
+                }
+                return;
+            }
+        }
+        
+        // ریست کامل
+        function resetGame() {
+            flightSegments = [];
+            stage = 1;
+            gameActive = true;
+            expectingDestination = false;
+            if(animationRequest) cancelAnimationFrame(animationRequest);
+            animating = false;
+            // ساخت مرحله اول
+            const airportsPair = generateStageAirports();
+            currentOrigin = airportsPair.origin;
+            currentDestination = airportsPair.destination;
+            drawCanvas();
+            document.getElementById('statusMsg').innerHTML = "✈️ بازی ریست شد. روی مبدا سبز کلیک و سپس مقصد قرمز";
+            document.getElementById('stageNum').innerText = stage;
+        }
+        
+        canvas.addEventListener('click', handleCanvasClick);
+        document.getElementById('resetGameBtn').addEventListener('click', resetGame);
+        
+        // شروع اولیه
+        resetGame();
+    })();
+</script>
+</body>
+</html>
